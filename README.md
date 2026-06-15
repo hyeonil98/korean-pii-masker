@@ -89,35 +89,35 @@ Masked Text
 ```
 korean-pii-masker/
 ├── README.md
-├── requirements.txt
+├── pyproject.toml
+├── main.py
 ├── configs/
-│   └── default.yaml
+│   └── train.yaml                    # 학습 하이퍼파라미터
 ├── data/
-│   ├── raw/
-│   ├── processed/
-│   └── samples/
-├── notebooks/
-├── src/
-│   └── pii_masker/
-│       ├── __init__.py
-│       ├── recognizers/
-│       │   ├── regex_recognizer.py
-│       │   ├── ner_recognizer.py
-│       │   └── dictionary_recognizer.py
-│       ├── masking/
-│       │   ├── policy.py
-│       │   └── masker.py
-│       ├── postprocessing/
-│       │   ├── span_merger.py
-│       │   └── context_filter.py
-│       ├── training/
-│       │   ├── dataset.py
-│       │   └── trainer.py
-│       └── evaluation/
-│           └── metrics.py
-├── tests/
-└── examples/
-    └── quickstart.py
+│   ├── 202605_RoadAddress_KR_Full/   # 행안부 도로명주소 원본 (git 제외)
+│   ├── generated/
+│   │   ├── road_address_components.json
+│   │   ├── addresses.jsonl           # 실주소 기반 합성 주소 1,000건
+│   │   ├── synthetic_written.jsonl   # 문어체 합성 PII 4,000건
+│   │   ├── synthetic_stt.jsonl       # STT 구어체 합성 PII 4,000건
+│   │   ├── negative.jsonl            # Negative 샘플 2,000건
+│   │   └── klue_ner.jsonl            # KLUE-NER 변환 21,008건
+│   └── processed/
+│       ├── train.jsonl               # 6,541건
+│       ├── valid.jsonl               # 817건
+│       └── test.jsonl                # 819건
+├── docs/
+│   ├── data_card.md
+│   └── training_plan.md
+└── scripts/
+    ├── labels.py
+    ├── generate_synthetic.py
+    ├── load_road_address.py
+    ├── generate_addresses.py
+    ├── convert_klue_ner.py
+    ├── mix_dataset.py
+    ├── train.py
+    └── evaluate.py
 ```
 
 ## Installation
@@ -126,7 +126,8 @@ korean-pii-masker/
 git clone https://github.com/your-username/korean-pii-masker.git
 cd korean-pii-masker
 
-pip install -r requirements.txt
+pip install uv
+uv sync
 ```
 
 ## Quick Start
@@ -245,42 +246,61 @@ O
 문의는 {PHONE} 또는 {EMAIL}로 연락 주세요.
 ```
 
-예시:
+현재 생성된 합성 데이터:
 
+| 파일 | 건수 | 설명 |
+|------|------|------|
+| `synthetic_written.jsonl` | 4,000 | 문어체 CS/배송 메시지 패턴 |
+| `synthetic_stt.jsonl` | 4,000 | 상담 STT 구어체 패턴 |
+| `negative.jsonl` | 2,000 | PII 없는 일반 문장 |
+| `addresses.jsonl` | 1,000 | 실주소 기반 주소 변형 7종 |
+
+```bash
+python scripts/generate_synthetic.py --mode written --num-samples 4000 --output data/generated/synthetic_written.jsonl
+python scripts/generate_synthetic.py --mode stt --num-samples 4000 --output data/generated/synthetic_stt.jsonl --negative-ratio 0.0
+python scripts/generate_addresses.py --sample-rate 0.01 --num-samples 1000
 ```
-김민수 고객님, 배송지는 서울시 강남구 테헤란로 123입니다.
-문의는 010-1234-5678 또는 minsu@example.com으로 연락 주세요.
+
+### 2. Public NER Dataset (KLUE-NER)
+
+KLUE-NER train split (21,008건)을 변환하여 이름(PS→NAME), 주소(LC→ADDRESS), 기관(OG→ORG) 학습에 활용합니다.
+
+```bash
+python scripts/convert_klue_ner.py --split train
 ```
 
-### 2. Public NER Dataset
+### 3. 혼합 및 분리
 
-한국어 NER 데이터셋을 활용하여 이름, 주소, 기관명 등 일반 개체명 인식 능력을 학습할 수 있습니다.
+4개 소스를 비율에 따라 혼합하고 train/valid/test로 분리합니다.
 
-### 3. Domain-specific Data
+```bash
+python scripts/mix_dataset.py \
+  --source data/generated/synthetic_written.jsonl:0.40 \
+  --source data/generated/synthetic_stt.jsonl:0.40 \
+  --source data/generated/klue_ner.jsonl:0.10 \
+  --source data/generated/negative.jsonl:0.10 \
+  --total 10000
+```
 
-실제 서비스 환경의 문장 패턴을 반영한 도메인별 데이터를 추가로 구축합니다.
-
-단, 실제 개인정보가 포함된 데이터를 사용할 경우 반드시 개인정보 보호 정책과 관련 법령을 준수해야 합니다.
+현재 `data/processed/` — train 6,541건 / valid 817건 / test 819건
 
 ## Training
 
-학습 스크립트는 추후 추가 예정입니다.
-
-예상 학습 방식:
+`klue/roberta-base` 기반 TokenClassification 모델을 HuggingFace `Trainer`로 학습합니다.
 
 ```bash
-python -m pii_masker.training.trainer \
-  --config configs/default.yaml \
-  --train data/processed/train.jsonl \
-  --valid data/processed/valid.jsonl
+python scripts/train.py
+python scripts/train.py --config configs/train.yaml
+python scripts/train.py --train data/processed/train.jsonl --valid data/processed/valid.jsonl
 ```
 
-추천 모델 후보:
+추천 베이스 모델:
 
-- `klue/roberta-base`
-- `monologg/koelectra-base-v3-discriminator`
-- `kykim/bert-kor-base`
-- `xlm-roberta-base`
+| 모델 | 특징 | 우선순위 |
+|------|------|---------|
+| `klue/roberta-base` | KLUE 벤치마크 최고 성능, 한국어 전용 | ★ 1순위 |
+| `monologg/koelectra-base-v3-discriminator` | 경량, 속도 우선 시 | 2순위 |
+| `xlm-roberta-base` | 다국어, 영문 혼용 텍스트 포함 시 | 필요 시 |
 
 ## Evaluation
 
@@ -301,18 +321,17 @@ python -m pii_masker.training.trainer \
 
 ## Roadmap
 
-- [x] 정규식 기반 탐지기 구현
-  - [x] 전화번호 탐지
-  - [x] 이메일 탐지
-  - [x] 주민등록번호 탐지
-  - [x] 카드번호 탐지
-  - [x] IP 주소 탐지
-  - [x] 차량번호 탐지
-- [ ] NER 학습 데이터 포맷 정의
-- [ ] 한국어 NER 모델 학습 파이프라인 구현
+- [x] NER 학습 데이터 포맷 정의 (`labels.py`)
+- [x] 합성 데이터 생성 파이프라인
+  - [x] 문어체 / STT 구어체 합성 PII 데이터 생성 (`generate_synthetic.py`)
+  - [x] 실주소 기반 주소 변형 생성 (`generate_addresses.py`, `load_road_address.py`)
+  - [x] KLUE-NER 변환 (`convert_klue_ner.py`)
+  - [x] 소스 혼합 + train/valid/test 분리 (`mix_dataset.py`)
+- [x] 한국어 NER 모델 학습 파이프라인 (`train.py`, `configs/train.yaml`)
+- [x] 평가 스크립트 (`evaluate.py` — Entity F1, Char Recall, Leakage Rate)
+- [ ] 정규식 기반 탐지기 구현
 - [ ] span merge 로직 구현
 - [ ] 마스킹 정책 엔진 구현
-- [ ] 평가 스크립트 구현
 - [ ] CLI 지원
 - [ ] REST API 지원
 - [ ] Docker 지원
