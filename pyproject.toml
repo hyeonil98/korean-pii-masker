@@ -1,0 +1,13 @@
+[project]
+name = "korean-pii-masker"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.0",
+    "transformers>=4.40",
+    "datasets>=2.18",
+    "seqeval>=1.2",
+    "pyyaml>=6.0",
+    "numpy>=1.26",
+    "accelerate>=1.1.0",
+]
